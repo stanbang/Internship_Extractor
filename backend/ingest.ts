@@ -63,11 +63,11 @@ export function normalize(row: Row, source = "Manual entry"): Omit<Job, "id"> {
   if (!company || !title)
     throw Error("Every listing needs company and title (or role).");
   const d: DurationFact = { ...emptyDuration(), ...(row.duration ?? {}) };
-  if (row.duration_min !== undefined && row.duration_min !== "")
+  if (row.duration_min != null && row.duration_min !== "")
     d.min = Number(row.duration_min);
-  if (row.duration_max !== undefined && row.duration_max !== "")
+  if (row.duration_max != null && row.duration_max !== "")
     d.max = Number(row.duration_max);
-  if (row.duration_months !== undefined && row.duration_months !== "") {
+  if (row.duration_months != null && row.duration_months !== "") {
     d.min = d.max = Number(row.duration_months);
     d.qualifier = "exact";
   }

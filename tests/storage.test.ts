@@ -70,6 +70,17 @@ const row = () =>
     url: "https://example.test/job/42",
     description: "Original description",
   });
+
+test("explicit null JSON durations stay unknown rather than becoming zero", () => {
+  const j = normalize({
+    ...row(),
+    duration_min: null,
+    duration_max: null,
+    duration_months: null,
+  });
+  assert.equal(j.duration.min, null);
+  assert.equal(j.duration.max, null);
+});
 test("deduplicate URL tracking variants and preserve personal data on refresh", () => {
   const s = new Store(":memory:");
   try {
