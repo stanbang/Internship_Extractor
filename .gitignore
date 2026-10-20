@@ -134,3 +134,24 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Fieldwork local data and generated assets
+node_modules/
+dist/
+data/
+exports/
+backups/
+private/
+captures/
+.env
+.env.*
+!.env.example
+*.sqlite*
+*.db
+*.db-*
+*.har
+*.saz
+*.log
+test-results/
+playwright-report/
+.DS_Store
