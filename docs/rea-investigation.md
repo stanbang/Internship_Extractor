@@ -1,0 +1,40 @@
+# Jorb findings and evidence
+
+Observed 21 October 2026, Asia/Singapore, at https://www.jorb.ai/search-jobs. The account owner signed in manually in a dedicated Chrome profile. Jorb operations remained read-only.
+
+## REA attachment — confirmed
+
+| Tool                     | Evidence ID                                                           | Observation                                                                                                                                                                                        |
+| ------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_browser_targets`   | `ev_e542fe67941a1aafb46076fbd39358f043737e57592dc73186983151d5baf51e` | CDP at `http://127.0.0.1:9222` responded with an exact `https://www.jorb.ai` page target.                                                                                                          |
+| `inspect_web_page`       | `ev_87e4666b020db460eebbba59c33dede14e28a5387a98bc7ee8a37001b90c7eaa` | Target `CB59710CFAA201D219B9D54B55F1B7CD` exposed the authenticated table, Level (2), Category (8), Location (1), Any time, All Jobs, Newest added, title/company search and five-page navigation. |
+| `capture_web_screenshot` | `ev_2cf6914828ee094b8ab5a32dfa985b409ef1995d75a321df98dd44f242e151db` | Visible desktop viewport corroborated the table and filter controls.                                                                                                                               |
+
+Script sources, console text, JSON body shapes, storage keys/fingerprints and WebSocket shapes were disabled. Origin scope was Jorb only. No credentials or protected APIs were accessed. Raw/private captures remain outside Git. This successful attachment supersedes the earlier discovery error `provider_unavailable / endpoint_unreachable`; it does not relabel earlier Browser work as REA evidence.
+
+## Earlier Browser observations — confirmed within inspected scope
+
+The user's selected Singapore, summer/off-cycle and eight-category result set contained **248 rows across five pages**. All visible rows were recorded; **88 software/adjacent candidates** received employer-link review attempts. This is a selected snapshot, not the full Jorb catalogue. Data files and screenshots remain private and uncommitted.
+
+| Finding                                                                                                                                                                                                                                           | Tool/evidence                                                     | Result in our app                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Desktop Company, Job Title, Level, Category, Location, Posted Date columns, employer Visit controls and account-tool columns                                                                                                                      | REA inspection/screenshot above; Browser table observations       | Paginated table, details and employer links; account tools not reproduced             |
+| Level options: Summer Internships, Insight Programmes, Off Cycle Internships, Industrial Placements, Graduate / Entry Level, Apprenticeships, Pre University, Events, Early Career, Developing Career, Specialist, Managerial, Head of Department | Browser `level-options.jpg`, retained privately                   | Preserve labels and accept additional imported values                                 |
+| Selected categories: Analytics / BI, Backend, Forward-Deployed Engineering, Frontend, Full-Stack, Networking & Systems Engineering, Platform Engineering, Tech Generalist                                                                         | Browser rows and structured 248-row export                        | Actual imported values populate choices; other categories not exhaustively catalogued |
+| Singapore selected; title/company search; All Jobs/saved-state control; default Newest added                                                                                                                                                      | REA accessibility; earlier Browser controls                       | Imported locations, text search and local saved-state filters                         |
+| Recency: Any time, 24 hours, 3/7/30 days, Include undated jobs                                                                                                                                                                                    | Browser `date-filter-options.jpg`                                 | Posting recency remains separate from placement dates                                 |
+| Role opens a description dialog; external links reach employer ATS/careers or another job source                                                                                                                                                  | Browser role dialogs and DOM-backed employer links                | Original details view and retained application links                                  |
+| Some narrow layouts show cards                                                                                                                                                                                                                    | Earlier Browser responsive observation                            | Original responsive layout; no exact rendering parity claimed                         |
+| No dedicated start/end/duration filter found in inspected menus                                                                                                                                                                                   | Bounded Browser inspection; current REA corroboration of controls | Advanced placement filters are additions, not claimed Jorb features                   |
+
+Description search, oldest/company/relevance sorting, not-saved state, compatibility and local tracker additions are our enhancements. Exact Jorb sort semantics and hidden option catalogues remain unknown.
+
+Employer pages sometimes provide exact dates (Virtu: 7 June–13 August 2027, ten weeks), month ranges, minimum commitments or seasonal flexibility. Many omit dates. Jorb-only facts retain reported certainty where independent employer verification was incomplete. Links can expire or show past deadlines.
+
+The earlier investigation judged whether an internship **fit inside an availability window**. The app does not import that conclusion: it recomputes **coverage of the entire May 2027–April 2028 placement**. A summer internship is a partial overlap; flexible seasons alone do not prove a twelve-month offer.
+
+## Framework and unknowns
+
+Earlier public JavaScript inspection found React 18.3.1 and React Router 6.30.4 package indicators. That describes shipped public assets, not every authenticated execution path. Current passive inspection did not collect source bodies. Our React implementation is original.
+
+No evidence established a permitted reusable collection API, hidden filters, internal ranking, refresh cadence or automatic synchronization rights. No authenticated network capture was needed. Supported refresh is browser-assisted/manual file import. Authentication walls, unavailable employer pages and incomplete eligibility remain explicit limitations. No Jorb jobs were saved, account settings changed, applications submitted or CAPTCHAs solved.
