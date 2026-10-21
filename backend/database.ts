@@ -28,6 +28,8 @@ const tables = [
   "job_labels",
   "presets",
   "settings",
+  "readytalent_jobs",
+  "readytalent_refreshes",
 ];
 export class Store {
   db: DatabaseSync;
@@ -42,10 +44,11 @@ export class Store {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);`,
     );
-    if (this.db.prepare("SELECT version FROM migrations WHERE version=1").get())
-      return;
-    this.transaction(() => {
-      this.db.exec(`
+    if (
+      !this.db.prepare("SELECT version FROM migrations WHERE version=1").get()
+    )
+      this.transaction(() => {
+        this.db.exec(`
 CREATE TABLE companies(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE);
 CREATE TABLE categories(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE);
 CREATE TABLE levels(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE);
@@ -66,12 +69,23 @@ CREATE TABLE job_labels(job_id TEXT REFERENCES jobs(id) ON DELETE CASCADE,label_
 CREATE TABLE presets(id TEXT PRIMARY KEY,name TEXT NOT NULL,filters TEXT NOT NULL);
 CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE INDEX jobs_posted ON jobs(posted_at);`);
-      for (const name of STATUSES) this.named("statuses", name);
-      this.savePreset(PERSONAL_PRESET);
-      this.db
-        .prepare("INSERT INTO migrations VALUES(1,?)")
-        .run(new Date().toISOString());
-    });
+        for (const name of STATUSES) this.named("statuses", name);
+        this.savePreset(PERSONAL_PRESET);
+        this.db
+          .prepare("INSERT INTO migrations VALUES(1,?)")
+          .run(new Date().toISOString());
+      });
+    if (
+      !this.db.prepare("SELECT version FROM migrations WHERE version=2").get()
+    )
+      this.transaction(() => {
+        this.db.exec(
+          `CREATE TABLE readytalent_jobs(job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,source_job_id TEXT NOT NULL UNIQUE,payload TEXT NOT NULL);CREATE TABLE readytalent_refreshes(id TEXT PRIMARY KEY,created_at TEXT NOT NULL,payload TEXT NOT NULL);`,
+        );
+        this.db
+          .prepare("INSERT INTO migrations VALUES(2,?)")
+          .run(new Date().toISOString());
+      });
   }
   transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
@@ -107,6 +121,13 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
     });
   }
   find(row: Omit<Job, "id">): string | undefined {
+    if (row.readyTalent) {
+      return (
+        this.db
+          .prepare("SELECT job_id FROM readytalent_jobs WHERE source_job_id=?")
+          .get(row.readyTalent.source_job_id) as any
+      )?.job_id;
+    }
     const c = canonicalUrl(row.url);
     const found =
       (c
@@ -166,7 +187,9 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
         row.description,
         row.postedAt,
         row.url,
-        identity(row),
+        row.readyTalent
+          ? `SIT ReadyTalent::${row.readyTalent.source_job_id}`
+          : identity(row),
         row.collectedAt,
         row.verifiedAt,
         row.availability,
@@ -195,7 +218,9 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
         id,
         source,
         sourceUrl,
-        canonicalUrl(row.url) || `manual:${id}:${source}`,
+        row.readyTalent
+          ? `readytalent:${row.readyTalent.source_job_id}`
+          : canonicalUrl(row.url) || `manual:${id}:${source}`,
         row.collectedAt,
         row.sourceUrl,
       );
@@ -230,6 +255,28 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
       this.db
         .prepare("UPDATE tracking SET deadline=? WHERE job_id=?")
         .run(row.deadline, id);
+    if (row.readyTalent) {
+      const previous = old?.readyTalent;
+      const payload = { ...row.readyTalent };
+      if (previous && preserveMissing) {
+        for (const key of Object.keys(payload) as (keyof typeof payload)[]) {
+          if (payload[key] === null) (payload as any)[key] = previous[key];
+        }
+      }
+      if (
+        previous &&
+        preserveMissing &&
+        payload.availability === "unverified"
+      ) {
+        payload.availability = previous.availability;
+        payload.availability_evidence = previous.availability_evidence;
+      }
+      this.db
+        .prepare(
+          "INSERT INTO readytalent_jobs VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET source_job_id=excluded.source_job_id,payload=excluded.payload",
+        )
+        .run(id, payload.source_job_id, JSON.stringify(payload));
+    }
     return id;
   }
   all(): Job[] {
@@ -283,7 +330,14 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
         "SELECT job_sources.*,sources.name FROM job_sources JOIN sources ON sources.id=source_id WHERE job_id=?",
       )
       .all(r.id) as any[];
+    const rt = this.db
+      .prepare("SELECT payload FROM readytalent_jobs WHERE job_id=?")
+      .get(r.id) as any;
+    const readyTalent = rt ? JSON.parse(rt.payload) : null;
     return {
+      sourceType: readyTalent ? "IWSP" : null,
+      sourceJobId: readyTalent?.source_job_id ?? null,
+      readyTalent,
       id: r.id,
       company: r.company,
       title: r.title,
@@ -428,7 +482,7 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
   backup() {
     return {
       format: "fieldwork-backup",
-      version: 1,
+      version: 2,
       createdAt: new Date().toISOString(),
       tables: Object.fromEntries(
         tables.map((t) => [t, this.db.prepare(`SELECT * FROM ${t}`).all()]),
@@ -436,8 +490,20 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
     };
   }
   restore(snapshot: any) {
-    if (snapshot?.format !== "fieldwork-backup" || snapshot.version !== 1)
+    if (
+      snapshot?.format !== "fieldwork-backup" ||
+      ![1, 2].includes(snapshot.version)
+    )
       throw Error("Unsupported backup format/version.");
+    if (snapshot.version === 1)
+      snapshot = {
+        ...snapshot,
+        tables: {
+          ...snapshot.tables,
+          readytalent_jobs: [],
+          readytalent_refreshes: [],
+        },
+      };
     for (const t of tables)
       if (
         !Array.isArray(snapshot.tables?.[t]) ||

@@ -15,6 +15,18 @@ import { fileURLToPath } from "node:url";
 import { Store } from "./database.js";
 import { normalize, readImport, exportCsv } from "./ingest.js";
 import type { Preset } from "../shared/model.js";
+import {
+  importReadyTalent,
+  latestCoverage,
+  exportReadyTalent,
+  exportReadyTalentCsv,
+} from "./readytalent.js";
+import {
+  resumeState,
+  loadResume,
+  reviewPacket,
+  importAgentReview,
+} from "./resume.js";
 export const dataDir = resolve(process.env.DATA_DIR ?? "data");
 export function createApp(store: Store, port = 4317) {
   const send = (res: ServerResponse, status: number, value: any) => {
@@ -76,6 +88,8 @@ export function createApp(store: Store, port = 4317) {
         });
       if (path === "/api/jobs" && method === "POST") {
         const data = await body(req);
+        if (data.source === "SIT ReadyTalent")
+          throw Error("Use the IWSP import with a coverage manifest.");
         return send(res, 200, store.import([normalize(data)]));
       }
       const tracking = path.match(/^\/api\/jobs\/([^/]+)\/tracking$/);
@@ -90,18 +104,67 @@ export function createApp(store: Store, port = 4317) {
         const id = decodeURIComponent(job[1]),
           old = store.get(id);
         if (!old) return send(res, 404, { error: "Listing not found." });
+        if (old.readyTalent)
+          throw Error(
+            "Refresh IWSP source facts through an authorized dataset. Personal tracking can be edited separately.",
+          );
         const update = normalize({ ...old, ...(await body(req)) });
         store.transaction(() => store.put(update, id, false));
         return send(res, 200, store.get(id));
       }
       if (path === "/api/import" && method === "POST") {
         const data = await body(req);
-        return send(
-          res,
-          200,
-          store.import(readImport(data.content, data.format)),
+        const rows = readImport(data.content, data.format);
+        if (rows.some((j) => j.source === "SIT ReadyTalent"))
+          throw Error("Use the IWSP import with a coverage manifest.");
+        return send(res, 200, store.import(rows));
+      }
+      if (path === "/api/readytalent" && method === "GET")
+        return send(res, 200, {
+          coverage: latestCoverage(store),
+          stored_count: store.all().filter((j) => j.readyTalent).length,
+        });
+      if (path === "/api/readytalent/import" && method === "POST")
+        return send(res, 200, importReadyTalent(store, await body(req)));
+      if (path === "/api/readytalent/export" && method === "GET") {
+        const csv = u.searchParams.get("format") === "csv";
+        res.writeHead(200, {
+          "content-type": csv
+            ? "text/csv; charset=utf-8"
+            : "application/json; charset=utf-8",
+          "content-disposition": `attachment; filename="readytalent-jobs.${csv ? "csv" : "json"}"`,
+          "cache-control": "no-store",
+        });
+        return res.end(
+          csv
+            ? exportReadyTalentCsv(store)
+            : JSON.stringify(exportReadyTalent(store), null, 2),
         );
       }
+      if (path === "/api/resume" && method === "GET")
+        return send(res, 200, await resumeState(store));
+      if (path === "/api/resume/load" && method === "POST")
+        return send(res, 200, await loadResume(store, (await body(req)).name));
+      if (path === "/api/resume" && method === "DELETE") {
+        store.setting("resume", null);
+        store.setting("agent_reviews", {});
+        return send(res, 200, { ok: true });
+      }
+      if (path === "/api/resume/review-packet" && method === "GET") {
+        const packet = await reviewPacket(
+          store,
+          u.searchParams.get("job") ?? "",
+        );
+        res.writeHead(200, {
+          "content-type": "application/json; charset=utf-8",
+          "content-disposition":
+            'attachment; filename="internship.review-packet.json"',
+          "cache-control": "no-store",
+        });
+        return res.end(JSON.stringify(packet, null, 2));
+      }
+      if (path === "/api/resume/review" && method === "POST")
+        return send(res, 200, importAgentReview(store, await body(req)));
       if (path === "/api/presets" && method === "POST") {
         store.savePreset((await body(req)) as Preset);
         return send(res, 200, store.presets());

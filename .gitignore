@@ -155,3 +155,17 @@ captures/
 test-results/
 playwright-report/
 .DS_Store
+
+# Candidate documents and local AI review packets must never enter Git history.
+/*.pdf
+/*.docx
+/*.doc
+/*[Rr]esume*.txt
+/*[Rr]esume*.md
+/*[Cc][Vv]*.txt
+/*[Cc][Vv]*.md
+*.resume.json
+*.review.json
+*.review-packet.json
+readytalent*.json
+readytalent*.csv

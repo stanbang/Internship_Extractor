@@ -211,7 +211,7 @@ test("SQLite persistence and migrations survive closing/reopening", () => {
     assert.equal(s.setting("preferences").search, "saved filter");
     assert.equal(
       (s.db.prepare("SELECT COUNT(*) n FROM migrations").get() as any).n,
-      1,
+      2,
     );
   } finally {
     s.close();

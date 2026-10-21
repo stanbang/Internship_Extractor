@@ -82,6 +82,9 @@ export interface Job {
   deadline: string | null;
   evidence: string;
   aliases?: string[];
+  sourceType?: "IWSP" | null;
+  sourceJobId?: string | null;
+  readyTalent?: import("./readytalent.js").ReadyTalentPosting | null;
 }
 export type MatchStatus =
   "confirmed" | "potential" | "incompatible" | "unknown";
