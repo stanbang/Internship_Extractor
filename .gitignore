@@ -169,3 +169,5 @@ playwright-report/
 *.review-packet.json
 readytalent*.json
 readytalent*.csv
+/fieldwork-backup*.json
+/internships.csv

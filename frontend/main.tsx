@@ -74,7 +74,7 @@ function App() {
       sources: [],
     }),
     [ready, setReady] = useState(false),
-    [view, setView] = useState("all"),
+    [view, setView] = useState("iwsp"),
     [filters, setFilters] = useState<Filters>(blankFilters),
     [page, setPage] = useState(1),
     [advanced, setAdvanced] = useState(false),

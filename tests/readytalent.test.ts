@@ -12,6 +12,8 @@ import {
   exportReadyTalent,
   exportReadyTalentCsv,
   normalizeReadyTalent,
+  portalDate,
+  readyTalentListingChanged,
 } from "../backend/readytalent.js";
 import {
   blankIWSPFilters,
@@ -19,6 +21,7 @@ import {
   RT_SOURCE,
   RT_EMPLOYMENT,
   RT_PROGRAMME,
+  advertisedAllowance,
   type ReadyTalentDataset,
 } from "../shared/readytalent.js";
 import {
@@ -34,6 +37,9 @@ import {
   docxText,
 } from "../backend/resume.js";
 import { createApp } from "../backend/server.js";
+import { acquireCollection, collectionOwner } from "../backend/source-lock.js";
+import { termQuote } from "../shared/skills.js";
+import { syncState } from "../backend/readytalent-sync.js";
 
 const timestamp = "2026-10-21T08:00:00Z";
 function posting(id = "synthetic-iwsp-a", patch: Record<string, unknown> = {}) {
@@ -529,6 +535,256 @@ test("IWSP HTTP import, source-fact protection, local tracking and exports work 
     assert.equal((await (await request("/bootstrap")).json()).jobs.length, 1);
   } finally {
     await new Promise<void>((ok) => app.close(() => ok()));
+    s.close();
+  }
+});
+
+test("source posting dates drive newest ordering and requirements participate in search and automatic feedback", () => {
+  const s = new Store(":memory:");
+  try {
+    importReadyTalent(
+      s,
+      dataset([
+        posting("older", {
+          original_metadata: { "Posting Date": "20/8/2026" },
+          job_title: "Older role",
+        }),
+        posting("latest", {
+          original_metadata: {
+            "Posting Date": "21/10/2026",
+            "Job Requirements": "TypeScript and Docker required.",
+          },
+          job_title: "Latest role",
+          original_description: "Build a service.",
+          original_posting_text:
+            "Build a service.\nTypeScript and Docker required.",
+          technical_skills: null,
+          internship_period: "2/5/2027 - 6/4/2028",
+        }),
+        posting("undated", { job_title: "Undated role" }),
+      ]),
+    );
+    const jobs = s.all(),
+      latest = jobs.find((j) => j.sourceJobId === "latest")!;
+    assert.equal(blankIWSPFilters().sort, "newest");
+    assert.deepEqual(
+      filterIWSP(jobs, blankIWSPFilters()).map((j) => j.sourceJobId),
+      ["latest", "older", "undated"],
+    );
+    assert.equal(latest.postedAt, "2026-10-21");
+    assert.equal(latest.start.value, "2027-05-02");
+    assert.equal(latest.end.value, "2028-04-06");
+    assert.equal(latest.duration.min, null); // Never invent twelve months from the IWSP label.
+    assert.equal(
+      filterIWSP(jobs, { ...blankIWSPFilters(), search: "Docker" })[0].id,
+      latest.id,
+    );
+    const result = evidenceMatch(
+      latest,
+      {
+        name: "resume.txt",
+        text: "PROJECTS\nService project\nDeveloped a TypeScript service with integration tests.",
+        hash: "synthetic",
+        loaded_at: timestamp,
+      },
+      {
+        cleaned: latest.description,
+        findings: { verdict: "posting_guard: clean" },
+      },
+      null,
+    );
+    assert.equal(result.status, "ready");
+    assert.deepEqual(
+      result.matched.map((m) => m.skill),
+      ["TypeScript"],
+    );
+    assert.deepEqual(result.not_evidenced, ["Docker"]);
+    assert.ok(
+      result.requirements.some(
+        (r) => r.skill === "Docker" && r.importance === "required",
+      ),
+    );
+    assert.ok(
+      result.project_evidence.some((q) => q.includes("TypeScript service")),
+    );
+    assert.ok(result.suggestions.some((q) => q.includes("Docker")));
+  } finally {
+    s.close();
+  }
+  assert.equal(portalDate("31/2/2026"), null);
+  assert.equal(portalDate("2/5/2027"), "2027-05-02");
+});
+
+test("metadata-only rows explain blocked matching instead of an empty or misleading assessment", () => {
+  const s = new Store(":memory:");
+  try {
+    importReadyTalent(
+      s,
+      dataset([
+        posting("empty", {
+          original_description: null,
+          technical_skills: null,
+        }),
+      ]),
+    );
+    const j = s.all()[0],
+      result = evidenceMatch(
+        j,
+        {
+          name: "resume.txt",
+          text: "Built a Python project with tests.",
+          hash: "test",
+          loaded_at: timestamp,
+        },
+        { cleaned: "", findings: { verdict: "posting_guard: clean" } },
+        null,
+      );
+    assert.equal(result.status, "missing_posting");
+    assert.equal(result.technical_coverage, null);
+    assert.match(result.summary, /not been collected/);
+    assert.equal(result.not_evidenced.length, 0);
+    assert.ok(result.suggestions[0].includes("detail refresh"));
+  } finally {
+    s.close();
+  }
+});
+
+test("a portfolio URL alone does not establish technology experience; only one collector can own a session", () => {
+  assert.equal(termQuote("Candidate | github.com/example", "GitHub"), null);
+  assert.equal(
+    termQuote(
+      "github.com/example\nUsed GitHub Actions to automate builds.",
+      "GitHub",
+    ),
+    "Used GitHub Actions to automate builds.",
+  );
+  const root = mkdtempSync(join(tmpdir(), "fieldwork-collector-"));
+  const release = acquireCollection(root);
+  try {
+    assert.equal(collectionOwner(root)?.pid, process.pid);
+    assert.equal(collectionOwner(root)?.running, true);
+    assert.throws(() => acquireCollection(root), /already running/);
+  } finally {
+    release();
+    assert.equal(collectionOwner(root), null);
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("resumable collection ignores row formatting but rechecks actual listing changes and legacy details", () => {
+  const old = posting("cache", {
+    closing_date: "2027-02-28",
+    evidence_id: "ui-sha256:synthetic",
+    original_metadata: {
+      "Advertised amount": "$1,700",
+      "Search row text": "Closed on 28/02/2027 $1,700 1 Vacancy",
+    },
+  });
+  const next = posting("cache", {
+    ...old,
+    original_metadata: {
+      "Advertised amount": "$1,700",
+      "Search row text":
+        "Synthetic role\nExample Test Company\nView Details\nClosed on 28/02/2027 $1,700 1 Vacancy",
+    },
+  });
+  assert.equal(readyTalentListingChanged(old, next), false);
+  assert.equal(
+    readyTalentListingChanged(old, { ...next, closing_date: "2027-03-01" }),
+    true,
+  );
+  assert.equal(
+    readyTalentListingChanged(old, {
+      ...next,
+      original_metadata: {
+        ...next.original_metadata,
+        "Advertised amount": "$2,000",
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    readyTalentListingChanged({ ...old, evidence_id: "ev_synthetic" }, next),
+    true,
+  );
+});
+
+test("an active external collector checkpoint becomes visible without losing local tracking", () => {
+  const root = mkdtempSync(join(tmpdir(), "fieldwork-sync-")),
+    s = new Store(":memory:");
+  const release = acquireCollection(root);
+  try {
+    writeFileSync(
+      join(root, "data/readytalent/readytalent-current.json"),
+      JSON.stringify(
+        dataset(
+          [
+            posting("live", {
+              original_metadata: { "Posting Date": "21/10/2026" },
+            }),
+          ],
+          { finished_at: null },
+        ),
+      ),
+    );
+    assert.equal(syncState(s, root).status, "running");
+    assert.equal(syncState(s, root).full, 1);
+    const job = s.all()[0];
+    assert.equal(job.postedAt, "2026-10-21");
+    s.track(job.id, { saved: true, notes: "Synthetic shortlist note" });
+    assert.equal(syncState(s, root).total, 1);
+    assert.equal(s.get(job.id)?.saved, true);
+    assert.equal(s.get(job.id)?.notes, "Synthetic shortlist note");
+  } finally {
+    release();
+    s.close();
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("literal aliases match NodeJS and ReactJS while an unqualified allowance stays unqualified", () => {
+  const s = new Store(":memory:");
+  try {
+    importReadyTalent(
+      s,
+      dataset([
+        posting("aliases", {
+          original_description: "Node.js and React required.",
+          technical_skills: null,
+          monthly_allowance: null,
+          original_metadata: { "Advertised amount": "$1,700" },
+        }),
+      ]),
+    );
+    const j = s.all()[0],
+      result = evidenceMatch(
+        j,
+        {
+          name: "resume.txt",
+          text: "Developed a NodeJS API using ReactJS.",
+          hash: "test",
+          loaded_at: timestamp,
+        },
+        {
+          cleaned: j.description,
+          findings: { verdict: "posting_guard: clean" },
+        },
+        null,
+      );
+    assert.deepEqual(result.not_evidenced, []);
+    assert.equal(result.technical_coverage, 100);
+    assert.equal(advertisedAllowance(j).min, 1700);
+    assert.equal(advertisedAllowance(j).monthly, false);
+    assert.equal(advertisedAllowance(j).currency, null);
+    assert.equal(
+      filterIWSP([j], {
+        ...blankIWSPFilters(),
+        minSalary: "1600",
+        includeUnknownSalary: false,
+      }).length,
+      1,
+    );
+  } finally {
     s.close();
   }
 });

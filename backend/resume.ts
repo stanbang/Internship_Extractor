@@ -1,11 +1,19 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, realpathSync, lstatSync } from "node:fs";
+import {
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  lstatSync,
+  statSync,
+} from "node:fs";
 import { resolve, dirname, extname, sep } from "node:path";
 import { spawn } from "node:child_process";
 import { unzipSync, strFromU8 } from "fflate";
 import { SaxesParser } from "saxes";
 import type { Store } from "./database.js";
 import type { Job } from "../shared/model.js";
+import { detectedTerms, termQuote } from "../shared/skills.js";
+import { readyTalentAnalysisText } from "./readytalent.js";
 import type {
   ResumeDocument,
   ResumeState,
@@ -179,6 +187,10 @@ type Guarded = {
   cleaned: string;
   findings: { verdict: string; [key: string]: unknown };
 };
+const guardCache = new WeakMap<
+  Store,
+  { key: string; promise: Promise<Guarded[]> }
+>();
 async function guardPostings(
   texts: string[],
   directory: string,
@@ -233,50 +245,35 @@ async function guardPostings(
     child.stdin.end(JSON.stringify(texts));
   });
 }
-const vocabulary = [
-  "C++",
-  "C#",
-  "Java",
-  "JavaScript",
-  "TypeScript",
-  "Python",
-  "Rust",
-  "Golang",
-  "SQL",
-  "React",
-  "Node.js",
-  "Unity",
-  "Unreal",
-  "Docker",
-  "Kubernetes",
-  "AWS",
-  "Azure",
-  "Git",
-  "Linux",
-  "REST",
-  "HTML",
-  "CSS",
-  "TensorFlow",
-  "PyTorch",
-  "OpenCV",
-  "computer vision",
-  "machine learning",
-  "data structures",
-  "algorithms",
-  "testing",
-  "CI/CD",
-];
-function occurrence(text: string, skill: string): string | null {
-  const escaped = skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(
-    `(^|[^\\p{L}\\p{N}_])(${escaped})(?=$|[^\\p{L}\\p{N}_+#])`,
-    "iu",
-  ).exec(text);
-  if (!match) return null;
-  const at = match.index + match[1].length,
-    start = text.lastIndexOf("\n", at) + 1,
-    end = text.indexOf("\n", at);
-  return text.slice(start, end < 0 ? text.length : end).trim();
+function projectEvidence(text: string, terms: string[]): string[] {
+  let inProjects = false;
+  return text
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((line) => {
+      if (
+        /^(?:academic |personal |selected |relevant )?projects?\s*$/i.test(line)
+      ) {
+        inProjects = true;
+        return false;
+      }
+      if (
+        /^(?:education|skills|technical skills|work experience|experience|certifications|awards)\s*$/i.test(
+          line,
+        )
+      )
+        inProjects = false;
+      return (
+        line.length > 25 &&
+        (inProjects ||
+          /\b(built|developed|implemented|designed|created|deployed|engineered)\b/i.test(
+            line,
+          )) &&
+        (terms.some((t) => termQuote(line, t)) || inProjects)
+      );
+    })
+    .filter((s, i, a) => a.indexOf(s) === i)
+    .slice(0, 5);
 }
 export function evidenceMatch(
   job: Job,
@@ -284,48 +281,148 @@ export function evidenceMatch(
   guard: Guarded,
   review: AgentReview | null,
 ): FitResult {
-  const warning = guard.findings.verdict.includes("⚠");
-  const terms = [
-    ...new Set([
-      ...job.skills,
-      ...vocabulary.filter((s) => occurrence(guard.cleaned, s)),
-    ]),
-  ];
+  const warning = !/^posting_guard:\s*clean\b/i.test(guard.findings.verdict);
+  const missing =
+    !job.readyTalent?.original_description?.trim() &&
+    !job.readyTalent?.minimum_requirements?.trim();
+  const analysis = job.readyTalent
+    ? readyTalentAnalysisText(job.readyTalent)
+    : guard.cleaned;
+  // Run the guard on the full source before examining any requirement sections.
+  const terms =
+    warning || missing
+      ? []
+      : detectedTerms(analysis, job.skills).filter((t) =>
+          termQuote(analysis, t),
+        );
   const matched = terms.flatMap((skill) => {
-    const r = occurrence(resume.text, skill),
-      p = occurrence(guard.cleaned, skill);
+    const r = termQuote(resume.text, skill),
+      p = termQuote(analysis, skill);
     return r && p ? [{ skill, resume_quote: r, job_quote: p }] : [];
   });
   const not_evidenced = terms.filter(
     (t) => !matched.some((m) => m.skill === t),
   );
+  const status = missing
+    ? "missing_posting"
+    : warning
+      ? "review_required"
+      : !terms.length
+        ? "no_terms"
+        : "ready";
+  const requirements = terms.map((skill) => {
+    const quote = termQuote(analysis, skill)!;
+    const importance =
+      /prefer|plus|advantage|nice.to.have|bonus|desirable/i.test(quote)
+        ? ("preferred" as const)
+        : /requir|must|proficien|strong|knowledge|experience|familiar|able to/i.test(
+              quote,
+            )
+          ? ("required" as const)
+          : ("mentioned" as const);
+    return {
+      skill,
+      importance,
+      matched: matched.some((m) => m.skill === skill),
+      quote,
+    };
+  });
+  const checks: FitResult["checks"] = [];
+  if (!missing && !warning) {
+    const rights = analysis
+      .split(/\r?\n/)
+      .find((l) =>
+        /singaporean|citizen|permanent resident|security clearance|work permit|sponsor|working rights/i.test(
+          l,
+        ),
+      );
+    checks.push({
+      label: "Work eligibility",
+      status: rights ? "check" : "unknown",
+      text:
+        rights ??
+        "The posting does not establish your work eligibility. Confirm with SIT or the employer.",
+    });
+    checks.push({
+      label: "IWSP period",
+      status: job.readyTalent?.internship_period ? "observed" : "unknown",
+      text:
+        job.readyTalent?.internship_period ??
+        "The employer's placement dates have not been stated or captured.",
+    });
+    checks.push({
+      label: "Work location",
+      status: job.readyTalent?.work_location ? "observed" : "unknown",
+      text: job.readyTalent?.work_location ?? "Work location is not stated.",
+    });
+  }
+  const summary =
+    status === "missing_posting"
+      ? "This listing's job description and requirements have not been collected. Resume matching is waiting for those details; this is not a negative assessment of your resume."
+      : warning
+        ? "The posting needs a safety review before automated analysis can continue."
+        : !terms.length
+          ? "The posting contains no recognized skill terms. Read the duties and requirements below; a keyword percentage would not be meaningful."
+          : `${matched.length} of ${terms.length} detected posting skills are evidenced in your resume. ${
+              not_evidenced.length
+                ? `Focus your application on ${
+                    matched
+                      .slice(0, 3)
+                      .map((m) => m.skill)
+                      .join(", ") || "your transferable projects"
+                  }; review ${not_evidenced.slice(0, 4).join(", ")} before applying.`
+                : "Your resume mentions every detected skill. Use relevant project outcomes to demonstrate depth."
+            }`;
+  const suggestions = missing
+    ? [
+        "Complete the ReadyTalent detail refresh for this listing. The title alone is insufficient for a job-specific review.",
+      ]
+    : warning
+      ? ["Review the guard findings before evaluating this posting."]
+      : [
+          ...not_evidenced
+            .slice(0, 4)
+            .map(
+              (s) =>
+                `For ${s}: if you have relevant work or coursework, add one specific example with your contribution and outcome. If you have not used it, treat it as a learning gap and do not claim experience.`,
+            ),
+          ...(matched.length
+            ? [
+                `Lead with a project that demonstrates ${matched
+                  .slice(0, 3)
+                  .map((m) => m.skill)
+                  .join(
+                    ", ",
+                  )}. Describe the problem, what you personally built, and a measurable or verifiable result.`,
+              ]
+            : [
+                "Explain how one of your actual projects relates to the advertised responsibilities. Name the tools and your own contribution; avoid adding unsupported skills.",
+              ]),
+          "Confirm the advertised placement dates and any citizenship or work-rights requirement before applying.",
+        ];
   return {
+    status,
+    summary,
+    requirements,
+    checks,
+    strengths:
+      warning || missing
+        ? []
+        : matched.map(
+            (m) =>
+              `${m.skill} is evidenced in your resume and appears in the posting.`,
+          ),
     job_id: job.id,
     posting_hash: postingHash(job),
     technical_coverage:
-      warning || !job.description.trim() || !terms.length
+      warning || missing || !terms.length
         ? null
         : Math.round((matched.length / terms.length) * 100),
     matched: warning ? [] : matched,
     not_evidenced: warning ? [] : not_evidenced,
-    project_evidence: warning
-      ? []
-      : matched
-          .filter((m) =>
-            /project|built|developed|implemented|designed|created/i.test(
-              m.resume_quote,
-            ),
-          )
-          .map((m) => m.resume_quote)
-          .filter((v, i, a) => a.indexOf(v) === i),
-    suggestions: warning
-      ? ["Review the guard findings before preparing an agent evaluation."]
-      : not_evidenced
-          .slice(0, 5)
-          .map(
-            (s) =>
-              `If you have experience with ${s}, add a concrete example and outcome. Otherwise, treat it as a learning gap; do not claim it.`,
-          ),
+    project_evidence:
+      warning || missing ? [] : projectEvidence(resume.text, terms),
+    suggestions,
     guard_verdict: guard.findings.verdict,
     guard_findings: guard.findings,
     review_required: warning,
@@ -348,10 +445,20 @@ export async function resumeState(
   const jobs = store.all().filter((j) => j.readyTalent);
   let guards: Guarded[];
   try {
-    guards = await guardPostings(
-      jobs.map((j) => j.description),
-      skill.directory,
+    const texts = jobs.map((j) => j.description);
+    const key = digest(
+      JSON.stringify([
+        texts,
+        skill.directory,
+        statSync(resolve(skill.directory, "tools/posting_guard.py")).mtimeMs,
+      ]),
     );
+    let cached = guardCache.get(store);
+    if (cached?.key !== key) {
+      cached = { key, promise: guardPostings(texts, skill.directory) };
+      guardCache.set(store, cached);
+    }
+    guards = await cached.promise;
   } catch (e) {
     state.skill.error = (e as Error).message;
     return state;

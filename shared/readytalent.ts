@@ -3,6 +3,31 @@ import type { Job } from "./model.js";
 export const RT_SOURCE = "SIT ReadyTalent";
 export const RT_EMPLOYMENT = "Integrated Work Study Programme (IWSP)";
 export const RT_PROGRAMME = "BSc (Hons) Com Sci in RTIS";
+export function advertisedAllowance(j: Job): {
+  min: number | null;
+  max: number | null;
+  text: string;
+  currency: string | null;
+  monthly: boolean;
+} {
+  const a = j.readyTalent?.monthly_allowance;
+  if (a) return { ...a, monthly: true };
+  const text =
+    j.readyTalent?.original_metadata?.["Allowance"] ??
+    j.readyTalent?.original_metadata?.["Advertised amount"] ??
+    "";
+  const amounts =
+    text
+      .match(/\d[\d,]*(?:\.\d{1,2})?/g)
+      ?.map((s) => Number(s.replaceAll(",", ""))) ?? [];
+  return {
+    min: amounts[0] ?? null,
+    max: amounts[1] ?? amounts[0] ?? null,
+    text,
+    currency: null,
+    monthly: false,
+  };
+}
 export interface ReadyTalentPosting {
   source: "SIT ReadyTalent";
   source_type: "IWSP";
@@ -64,6 +89,16 @@ export interface Coverage extends RefreshManifest {
   complete: boolean;
   last_successful_refresh: string | null;
 }
+export type SourceSync = {
+  status: "idle" | "running" | "complete" | "error";
+  page: number;
+  total: number;
+  full: number;
+  title: string | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
 export interface IWSPFilters {
   search: string;
   categories: string[];
@@ -76,7 +111,14 @@ export interface IWSPFilters {
   includeUnknownClosing: boolean;
   statuses: string[];
   savedOnly: boolean;
-  sort: "relevance" | "resume" | "closing" | "salary" | "company";
+  sort:
+    | "newest"
+    | "oldest"
+    | "relevance"
+    | "resume"
+    | "closing"
+    | "salary"
+    | "company";
 }
 export const blankIWSPFilters = (): IWSPFilters => ({
   search: "",
@@ -90,7 +132,7 @@ export const blankIWSPFilters = (): IWSPFilters => ({
   includeUnknownClosing: true,
   statuses: [],
   savedOnly: false,
-  sort: "relevance",
+  sort: "newest",
 });
 export function filterIWSP(
   jobs: Job[],
@@ -110,7 +152,7 @@ export function filterIWSP(
       ];
       if (
         q &&
-        !`${j.company} ${j.title} ${r.original_description ?? ""} ${skills.join(" ")}`
+        !`${j.company} ${j.title} ${j.description} ${skills.join(" ")}`
           .toLowerCase()
           .includes(q)
       )
@@ -135,7 +177,7 @@ export function filterIWSP(
       )
         return false;
       if (f.minSalary || f.maxSalary) {
-        const a = r.monthly_allowance;
+        const a = advertisedAllowance(j);
         if (a?.min == null && a?.max == null) {
           if (!f.includeUnknownSalary) return false;
         } else if (
@@ -156,6 +198,15 @@ export function filterIWSP(
       return true;
     })
     .sort((a, b) => {
+      if (f.sort === "newest" || f.sort === "oldest") {
+        if (!a.postedAt && b.postedAt) return 1;
+        if (a.postedAt && !b.postedAt) return -1;
+        const dates = (a.postedAt ?? "").localeCompare(b.postedAt ?? "");
+        return (
+          (f.sort === "newest" ? -dates : dates) ||
+          (a.readyTalent?.page ?? Infinity) - (b.readyTalent?.page ?? Infinity)
+        );
+      }
       if (f.sort === "resume")
         return (
           (scores[b.id] ?? -1) - (scores[a.id] ?? -1) ||
@@ -163,8 +214,8 @@ export function filterIWSP(
         );
       if (f.sort === "salary")
         return (
-          (b.readyTalent?.monthly_allowance?.min ?? -1) -
-            (a.readyTalent?.monthly_allowance?.min ?? -1) ||
+          (advertisedAllowance(b).min ?? -1) -
+            (advertisedAllowance(a).min ?? -1) ||
           a.company.localeCompare(b.company)
         );
       if (f.sort === "closing")

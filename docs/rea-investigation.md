@@ -59,3 +59,9 @@ After the user's job-details-only approval, automatic review still rejected `ins
 Only the 20 previously authorized job rows were persisted, with descriptions and unobserved fields null. The local manifest records 1/8 pages, 20 missing descriptions and 137 source rows still uncollected. No full description was imported or compared against the portal. Currency and monthly pay period were not inferred from the search row's dollar sign. No official export was observed in the search-page capture; export availability elsewhere remains unknown.
 
 The implementation is usable with incomplete imports and visibly reports these limits. This is not a claim that portal collection or the overall investigation is complete.
+
+# Subsequent authenticated collection
+
+The initial access/coverage limits recorded below were subsequently resolved through the user's explicit read-only authorization and manual authentication. A single-session normal-UI collector now captures the IWSP/RTIS scope without protected API calls or authentication-data extraction. Final collection verified 157 distinct rows on 8 pages with all descriptions, requirements, posting dates and placement periods present, and zero errors. See the current [verification record](verification.md) and [usage guide](readytalent.md).
+
+REA `list_browser_targets` confirmed that all job popups were closed after collection and only the main source search page remained (`ev_67197226206c76638c8963fa2e2f46dbae6e4d351eb9dc830721c6cd7ece593a`). The full posting fields and capture digests are stored only in the ignored local dataset, not in this report or Git history.

@@ -13,6 +13,8 @@ import {
 import { resolve, extname, dirname, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Store } from "./database.js";
+import { aiReviewTasks, startAIReview } from "./agent-review.js";
+import { syncState, startSourceSync } from "./readytalent-sync.js";
 import { normalize, readImport, exportCsv } from "./ingest.js";
 import type { Preset } from "../shared/model.js";
 import {
@@ -124,6 +126,14 @@ export function createApp(store: Store, port = 4317) {
           coverage: latestCoverage(store),
           stored_count: store.all().filter((j) => j.readyTalent).length,
         });
+      if (path === "/api/readytalent/sync" && method === "GET")
+        return send(res, 200, syncState(store));
+      if (path === "/api/readytalent/sync" && method === "POST")
+        return send(
+          res,
+          202,
+          startSourceSync(store, !!(await body(req)).refresh_details),
+        );
       if (path === "/api/readytalent/import" && method === "POST")
         return send(res, 200, importReadyTalent(store, await body(req)));
       if (path === "/api/readytalent/export" && method === "GET") {
@@ -142,7 +152,18 @@ export function createApp(store: Store, port = 4317) {
         );
       }
       if (path === "/api/resume" && method === "GET")
-        return send(res, 200, await resumeState(store));
+        return send(res, 200, {
+          ...(await resumeState(store)),
+          ai: aiReviewTasks(store),
+        });
+      if (path === "/api/resume/analyze" && method === "POST") {
+        const input = await body(req);
+        return send(
+          res,
+          202,
+          startAIReview(store, input.job_id, !!input.retry),
+        );
+      }
       if (path === "/api/resume/load" && method === "POST")
         return send(res, 200, await loadResume(store, (await body(req)).name));
       if (path === "/api/resume" && method === "DELETE") {

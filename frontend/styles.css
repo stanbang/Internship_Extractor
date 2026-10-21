@@ -13,6 +13,27 @@
   justify-content: space-between;
   margin: 25px 0 15px;
 }
+.resume-loaded-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px 20px;
+  border: 1px solid #cbdccc;
+  border-radius: 10px;
+  margin: 18px 0;
+  background: #f4f8f2;
+  color: #335d45;
+}
+.resume-loaded-banner div {
+  flex: 1;
+  font-size: 13px;
+}
+.resume-loaded-banner small {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: #657d6c;
+}
 .iwsp-toolbar small {
   font-size: 12px;
   font-weight: 400;
@@ -22,7 +43,7 @@
   border: 1px solid #d4e2d7;
   background: #edf3eb;
   border-radius: 12px;
-  padding: 18px 22px;
+  padding: 10px 18px;
   margin-bottom: 18px;
 }
 .scope-banner > div {
@@ -37,7 +58,7 @@
 .iwsp-coverage {
   border: 1px solid var(--line);
   background: #fff;
-  padding: 20px 22px;
+  padding: 12px 18px;
   border-radius: 12px;
   margin-bottom: 22px;
 }
@@ -80,6 +101,11 @@
 .iwsp-coverage details {
   padding-top: 10px;
   font-size: 13px;
+}
+.collection-details > summary {
+  color: #667d6e;
+  font-size: 11px;
+  cursor: pointer;
 }
 .iwsp-filter-grid {
   display: grid;
@@ -127,6 +153,57 @@
   color: #7c8c81;
   margin-bottom: 6px;
   max-width: 390px;
+}
+.iwsp-table td .iwsp-compact-facts {
+  display: none;
+}
+@media (max-width: 1100px) {
+  .iwsp-table table {
+    min-width: 0;
+    table-layout: fixed;
+  }
+  .iwsp-table :is(th, td) {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .iwsp-table :is(th, td):first-child {
+    width: 28px;
+  }
+  .iwsp-table :is(th, td):nth-child(2) {
+    width: auto;
+  }
+  .iwsp-table :is(th, td):nth-child(3),
+  .iwsp-table :is(th, td):nth-child(4),
+  .iwsp-table :is(th, td):nth-child(5) {
+    display: none;
+  }
+  .iwsp-table :is(th, td):nth-child(6) {
+    width: 125px;
+  }
+  .iwsp-table :is(th, td):nth-child(7) {
+    width: 80px;
+  }
+  .iwsp-table :is(th, td):last-child {
+    width: 32px;
+  }
+  .iwsp-table td .iwsp-compact-facts {
+    display: block;
+    color: #446653;
+    font-size: 10px;
+    line-height: 1.6;
+  }
+  .iwsp-company,
+  .role-link {
+    overflow-wrap: anywhere;
+  }
+}
+@media (max-width: 600px) {
+  .iwsp-table :is(th, td):nth-child(7) {
+    display: none;
+  }
+  .iwsp-table :is(th, td):nth-child(6) {
+    width: 100px;
+  }
 }
 .iwsp-table td small {
   display: block;
@@ -2018,4 +2095,25 @@ blockquote {
 .category-text,
 .tag {
   font-size: 10px;
+}
+.analysis-summary {
+  padding: 16px 20px;
+  background: #eef5ef;
+  border: 1px solid #cadbce;
+  border-radius: 10px;
+  margin: 16px 0;
+  color: #264734;
+  line-height: 1.65;
+}
+.analysis-summary p {
+  margin: 6px 0 0;
+}
+.advanced-review {
+  margin: 20px 0;
+}
+.advanced-review summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #526c5e;
+  margin-bottom: 12px;
 }

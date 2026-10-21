@@ -12,6 +12,94 @@ import {
 } from "../shared/readytalent.js";
 import type { Store } from "./database.js";
 import type { Job } from "../shared/model.js";
+import { detectedTerms } from "../shared/skills.js";
+
+// The Singapore portal displays day/month/year. Reject invalid calendar dates.
+export function portalDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value))
+    return day(value) === null ? null : value;
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value.trim());
+  if (!m) return null;
+  const iso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return day(iso) === null ? null : iso;
+}
+export function readyTalentAnalysisText(r: ReadyTalentPosting): string {
+  return (
+    [
+      r.original_description,
+      r.responsibilities,
+      r.minimum_requirements,
+      r.original_metadata?.["Job Requirements"],
+      r.preferred_qualifications,
+    ]
+      .filter((v, i, a) => v?.trim() && a.indexOf(v) === i)
+      .join("\n\n") ||
+    r.original_posting_text ||
+    ""
+  );
+}
+export function detectedAreas(title: string, text: string): string[] {
+  const source = title + "\n" + text;
+  const rules: [string, RegExp][] = [
+    [
+      "Software & web",
+      /software|full[ -]?stack|front[ -]?end|back[ -]?end|web develop|programmer|application develop/i,
+    ],
+    [
+      "Data & AI",
+      /data (?:anal|engineer|science)|machine learning|artificial intelligence|\bLLM\b|\bGenAI\b|\bAI\b/i,
+    ],
+    [
+      "Games & graphics",
+      /game|graphics|\bUnity\b|\bUnreal\b|rendering|mixed reality|virtual reality/i,
+    ],
+    [
+      "Cloud & infrastructure",
+      /devops|devsecops|cloud|platform engineer|infrastructure|site reliability/i,
+    ],
+    [
+      "Security",
+      /cybersecurity|cyber security|information security|security engineer/i,
+    ],
+    [
+      "Embedded & robotics",
+      /embedded|robotics|firmware|\bFPGA\b|microcontroller/i,
+    ],
+    [
+      "Product & design",
+      /product design|\bUX\b|\bUI\b|user experience|graphic design/i,
+    ],
+    [
+      "Business & solutions",
+      /business analyst|solutions engineer|solution engineer|project executive|business development/i,
+    ],
+  ];
+  return rules
+    .filter(([, pattern]) => pattern.test(source))
+    .map(([area]) => area);
+}
+export function readyTalentListingChanged(
+  previous: ReadyTalentPosting | undefined,
+  next: ReadyTalentPosting,
+): boolean {
+  if (!previous) return true;
+  // Upgrade earlier accessibility-only captures to exact visible textarea values once.
+  if (previous.original_description && previous.evidence_id?.startsWith("ev_"))
+    return true;
+  const amount = (r: ReadyTalentPosting) =>
+    (r.original_metadata?.["Advertised amount"] ?? "").replace(/[\s,]/g, "");
+  const vacancy = (r: ReadyTalentPosting) =>
+    r.original_metadata?.["Search row text"]?.match(/(\d+)\s+Vacanc/i)?.[1] ??
+    null;
+  return (
+    previous.job_title !== next.job_title ||
+    previous.company_name !== next.company_name ||
+    previous.closing_date !== next.closing_date ||
+    amount(previous) !== amount(next) ||
+    vacancy(previous) !== vacancy(next)
+  );
+}
 
 const nullable = (v: unknown): string | null =>
   v == null || v === "" ? null : String(v);
@@ -154,19 +242,32 @@ export function readyTalentJob(r: ReadyTalentPosting): Omit<Job, "id"> {
   search.searchParams.set("q", r.job_title);
   search.searchParams.set("employmenttypes", RT_EMPLOYMENT);
   search.searchParams.set("programmes", RT_PROGRAMME);
+  const fullText = r.original_posting_text || readyTalentAnalysisText(r);
+  const range =
+    /^(\d{1,2}\/\d{1,2}\/\d{4})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{4})$/.exec(
+      r.internship_period?.trim() ?? "",
+    );
+  const start = range ? portalDate(range[1]) : null,
+    end = range ? portalDate(range[2]) : null;
   return {
     ...normalize({
       company: r.company_name,
       title: r.job_title,
-      description: r.original_description ?? "",
+      description: fullText,
+      posting_date: portalDate(r.original_metadata?.["Posting Date"]),
+      start_date: start,
+      end_date: end,
+      date_evidence: r.internship_period ?? "",
       locations: r.work_location ? [r.work_location] : [],
       levels: [r.employment_type ?? RT_EMPLOYMENT],
-      categories: r.categories ?? [],
-      skills: [
+      categories: r.categories?.length
+        ? r.categories
+        : detectedAreas(r.job_title, readyTalentAnalysisText(r)),
+      skills: detectedTerms(readyTalentAnalysisText(r), [
         ...(r.technical_skills ?? []),
         ...(r.programming_languages ?? []),
         ...(r.technologies ?? []),
-      ],
+      ]),
       url: search.toString(),
       source: RT_SOURCE,
       sourceUrl: r.original_url ?? search.toString(),
@@ -177,7 +278,7 @@ export function readyTalentJob(r: ReadyTalentPosting): Omit<Job, "id"> {
       eligibility: r.eligible_programmes?.join("; ") ?? "",
       evidence: r.evidence_id ?? "",
     }),
-    description: r.original_description ?? "",
+    description: fullText,
     sourceType: "IWSP",
     sourceJobId: r.source_job_id,
     readyTalent: r,

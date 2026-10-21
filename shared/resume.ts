@@ -10,6 +10,25 @@ export type MatchEvidence = {
   job_quote: string;
 };
 export type FitResult = {
+  status:
+    | "ready"
+    | "missing_posting"
+    | "no_terms"
+    | "review_required"
+    | "guard_unavailable";
+  summary: string;
+  strengths: string[];
+  requirements: {
+    skill: string;
+    importance: "required" | "preferred" | "mentioned";
+    matched: boolean;
+    quote: string;
+  }[];
+  checks: {
+    label: string;
+    status: "check" | "observed" | "unknown";
+    text: string;
+  }[];
   job_id: string;
   posting_hash: string;
   technical_coverage: number | null;
@@ -49,6 +68,7 @@ export type AgentReview = {
   reviewed_at: string;
 };
 export type ResumeState = {
+  ai?: Record<string, AIReviewTask>;
   files: string[];
   resume: ResumeDocument | null;
   skill: {
@@ -59,4 +79,10 @@ export type ResumeState = {
     error: string | null;
   };
   results: FitResult[];
+};
+export type AIReviewTask = {
+  key: string;
+  status: "queued" | "running" | "complete" | "error";
+  error: string | null;
+  updated_at: string;
 };

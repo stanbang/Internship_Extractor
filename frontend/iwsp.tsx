@@ -21,6 +21,7 @@ import {
   RT_PROGRAMME,
   type Coverage,
   type IWSPFilters,
+  type SourceSync,
 } from "../shared/readytalent";
 import type { FitResult, ResumeState } from "../shared/resume";
 import { api, Modal, Multi, Field } from "./ui";
@@ -32,7 +33,10 @@ const shown = (v: unknown): string =>
       ? v.join(" · ") || "Not stated"
       : String(v);
 const allowance = (j: Job) =>
-  j.readyTalent?.monthly_allowance?.text || "Not stated";
+  j.readyTalent?.monthly_allowance?.text ||
+  j.readyTalent?.original_metadata?.["Allowance"] ||
+  j.readyTalent?.original_metadata?.["Advertised amount"] ||
+  "Not stated";
 const download = (value: unknown, name: string) => {
   const link = document.createElement("a"),
     url = URL.createObjectURL(
@@ -59,6 +63,7 @@ export function IWSPJobs({
 }: Props) {
   const jobs = useMemo(() => allJobs.filter((j) => j.readyTalent), [allJobs]);
   const [coverage, setCoverage] = useState<Coverage | null>(null),
+    [sourceSync, setSourceSync] = useState<SourceSync | null>(null),
     [filters, setFilters] = useState<IWSPFilters>(blankIWSPFilters),
     [page, setPage] = useState(1),
     [advanced, setAdvanced] = useState(false),
@@ -71,18 +76,37 @@ export function IWSPJobs({
     [compareOpen, setCompareOpen] = useState(false),
     [fitJob, setFitJob] = useState<Job | null>(null);
   const refresh = async () => {
-    const [r, s] = await Promise.allSettled([
+    const [r, s, sync] = await Promise.allSettled([
       api("/readytalent"),
       api("/resume"),
+      api("/readytalent/sync"),
     ]);
     if (r.status === "fulfilled") setCoverage(r.value.coverage);
     if (s.status === "fulfilled") setResume(s.value);
+    if (sync.status === "fulfilled") setSourceSync(sync.value);
     if (r.status === "rejected") throw r.reason;
     if (s.status === "rejected") throw s.reason;
   };
   useEffect(() => {
     void refresh().catch((e) => setError(e.message));
   }, [allJobs]);
+  useEffect(() => {
+    if (sourceSync?.status !== "running") return;
+    let lastFull = sourceSync.full;
+    const timer = setInterval(() => {
+      void api("/readytalent/sync")
+        .then(async (value) => {
+          setSourceSync(value);
+          if (value.status !== "running" || value.full !== lastFull) {
+            lastFull = value.full;
+            await reload();
+            await refresh();
+          }
+        })
+        .catch((e) => setError(e.message));
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [sourceSync?.status]);
   const run = async (fn: () => Promise<unknown>) => {
     setError("");
     setBusy(true);
@@ -98,11 +122,37 @@ export function IWSPJobs({
     (resume?.results ?? []).map((r) => [r.job_id, r]),
   );
   const scores = Object.fromEntries(
-    (resume?.results ?? []).map((r) => [
-      r.job_id,
-      r.agent_review?.overall ?? null,
-    ]),
+    (resume?.results ?? []).map((r) => [r.job_id, r.technical_coverage]),
   );
+  useEffect(() => {
+    if (!fitJob || !resume?.resume) return;
+    const result = results[fitJob.id],
+      task = resume.ai?.[fitJob.id];
+    if (
+      !result ||
+      result.status === "missing_posting" ||
+      result.review_required ||
+      result.agent_review ||
+      task?.key === `${resume.resume.hash}:${result.posting_hash}`
+    )
+      return;
+    void api("/resume/analyze", "POST", { job_id: fitJob.id })
+      .then(refresh)
+      .catch((e) => setError(e.message));
+  }, [
+    fitJob?.id,
+    resume?.resume?.hash,
+    results[fitJob?.id ?? ""]?.posting_hash,
+  ]);
+  useEffect(() => {
+    const task = resume?.ai?.[fitJob?.id ?? ""];
+    if (!fitJob || !task || !["queued", "running"].includes(task.status))
+      return;
+    const timer = setInterval(() => {
+      void refresh().catch((e) => setError(e.message));
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [fitJob?.id, resume?.ai?.[fitJob?.id ?? ""]?.status]);
   const filtered = filterIWSP(jobs, filters, scores),
     pages = Math.max(1, Math.ceil(filtered.length / 25)),
     current = Math.min(page, pages),
@@ -117,9 +167,7 @@ export function IWSPJobs({
   const values = (key: "categories" | "skills") =>
     [
       ...new Set(
-        jobs.flatMap((j) =>
-          key === "categories" ? (j.readyTalent?.categories ?? []) : j.skills,
-        ),
+        jobs.flatMap((j) => (key === "categories" ? j.categories : j.skills)),
       ),
     ].sort();
   const comparison = jobs.filter((j) => compareIds.includes(j.id));
@@ -134,16 +182,32 @@ export function IWSPJobs({
         <div>
           <p className="eyebrow">SIT READYTALENT · PRIVATE SOURCE</p>
           <h1>SIT IWSP Jobs</h1>
-          <p>A complete view first. Your shortlist comes next.</p>
+          <p>
+            Current IWSP postings, your resume feedback and your application
+            shortlist.
+          </p>
         </div>
         <div className="iwsp-actions">
           <button className="secondary" onClick={() => setResumeOpen(true)}>
             <FileText size={17} />
             Resume analysis
           </button>
-          <button className="primary" onClick={() => setImporting(true)}>
+          <button
+            className="primary"
+            disabled={sourceSync?.status === "running"}
+            onClick={() =>
+              void run(async () => {
+                setSourceSync(await api("/readytalent/sync", "POST", {}));
+              })
+            }
+          >
             <RefreshCw size={17} />
-            Refresh from file
+            {sourceSync?.status === "running"
+              ? "Syncing ReadyTalent…"
+              : "Sync ReadyTalent"}
+          </button>
+          <button className="secondary" onClick={() => setImporting(true)}>
+            <Upload size={16} /> Import file
           </button>
         </div>
       </section>
@@ -162,6 +226,45 @@ export function IWSPJobs({
           Open ReadyTalent <ArrowUpRight size={15} />
         </a>
       </div>
+      {sourceSync?.status === "running" && (
+        <div className="analysis-summary" role="status">
+          <strong>Reading ReadyTalent through your signed-in Chrome</strong>
+          <p>
+            {sourceSync.full
+              ? `Captured ${sourceSync.full} of ${sourceSync.total} job details${sourceSync.title ? " · " + sourceSync.title : ""}`
+              : `Reading listing page ${sourceSync.page} · ${sourceSync.total || "…"} jobs`}
+            . Each detail window is closed after capture. Keep the dedicated
+            search session open.
+          </p>
+        </div>
+      )}
+      {sourceSync?.error && (
+        <div className="warning-box" role="alert">
+          {sourceSync.error}
+        </div>
+      )}
+      {resume?.resume && (
+        <div className="resume-loaded-banner">
+          <FileText size={17} />
+          <div>
+            <strong>Resume loaded · {resume.resume.name}</strong>
+            <small>
+              Automatic feedback for{" "}
+              {
+                resume.results.filter((r) => r.status !== "missing_posting")
+                  .length
+              }{" "}
+              postings · open a role’s fit panel for AI feedback.
+            </small>
+          </div>
+          <button
+            className="text-button"
+            onClick={() => change("sort", "resume")}
+          >
+            Sort by my skill match
+          </button>
+        </div>
+      )}
       {error && (
         <div role="alert" className="error-banner">
           {error}
@@ -190,58 +293,70 @@ export function IWSPJobs({
               : "Collection incomplete"}
           </span>
           <small>
-            Latest attempt:{" "}
-            {coverage?.finished_at ?? coverage?.started_at ?? "No import yet"}
+            {jobs.length} postings ·{" "}
+            {Math.max(
+              0,
+              (coverage?.extracted_count ?? 0) -
+                (coverage?.missing_descriptions ?? 0),
+            )}{" "}
+            full descriptions · {coverage?.missing_descriptions ?? 0} pending
           </small>
         </div>
-        <div className="iwsp-stats">
-          <div>
-            <strong>{coverage?.expected_count ?? "—"}</strong>
-            <span>on source</span>
+        <details className="collection-details">
+          <summary>Source and sync details</summary>
+          <p className="hint">
+            Latest attempt:{" "}
+            {coverage?.finished_at ?? coverage?.started_at ?? "No import yet"}
+          </p>
+          <div className="iwsp-stats">
+            <div>
+              <strong>{coverage?.expected_count ?? "—"}</strong>
+              <span>on source</span>
+            </div>
+            <div>
+              <strong>{jobs.length}</strong>
+              <span>stored locally</span>
+            </div>
+            <div>
+              <strong>{coverage?.extracted_count ?? 0}</strong>
+              <span>in latest attempt</span>
+            </div>
+            <div>
+              <strong>{coverage?.missing_descriptions ?? "—"}</strong>
+              <span>descriptions missing</span>
+            </div>
+            <div>
+              <strong>
+                {new Set(coverage?.pages_processed ?? []).size}/
+                {coverage?.expected_pages ?? "?"}
+              </strong>
+              <span>pages processed</span>
+            </div>
+            <div>
+              <strong>{coverage?.duplicate_count ?? 0}</strong>
+              <span>duplicate IDs</span>
+            </div>
           </div>
-          <div>
-            <strong>{jobs.length}</strong>
-            <span>stored locally</span>
-          </div>
-          <div>
-            <strong>{coverage?.extracted_count ?? 0}</strong>
-            <span>in latest attempt</span>
-          </div>
-          <div>
-            <strong>{coverage?.missing_descriptions ?? "—"}</strong>
-            <span>descriptions missing</span>
-          </div>
-          <div>
-            <strong>
-              {new Set(coverage?.pages_processed ?? []).size}/
-              {coverage?.expected_pages ?? "?"}
-            </strong>
-            <span>pages processed</span>
-          </div>
-          <div>
-            <strong>{coverage?.duplicate_count ?? 0}</strong>
-            <span>duplicate IDs</span>
-          </div>
-        </div>
-        <p className="hint">
-          Last complete refresh: {coverage?.last_successful_refresh ?? "None"}.
-          Counts describe collection, independent of filters. Source rows absent
-          from a refresh stay available for review.
-        </p>
-        {!!coverage?.errors.length && (
-          <details>
-            <summary>{coverage.errors.length} collection errors</summary>
-            <ul>
-              {coverage.errors.map((e, i) => (
-                <li key={i}>
-                  {e.page ? `Page ${e.page}: ` : ""}
-                  {e.job_id ? `${e.job_id}: ` : ""}
-                  {e.message}
-                </li>
-              ))}
-            </ul>
-          </details>
-        )}
+          <p className="hint">
+            Last complete refresh: {coverage?.last_successful_refresh ?? "None"}
+            . Counts describe collection, independent of filters. Source rows
+            absent from a refresh stay available for review.
+          </p>
+          {!!coverage?.errors.length && (
+            <details>
+              <summary>{coverage.errors.length} collection errors</summary>
+              <ul>
+                {coverage.errors.map((e, i) => (
+                  <li key={i}>
+                    {e.page ? `Page ${e.page}: ` : ""}
+                    {e.job_id ? `${e.job_id}: ` : ""}
+                    {e.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </details>
       </section>
       <section className="search-panel">
         <div className="search-top">
@@ -274,7 +389,7 @@ export function IWSPJobs({
         </div>
         <div className="filter-row">
           <Multi
-            label="Category"
+            label="Role area (detected)"
             values={values("categories")}
             selected={filters.categories}
             onChange={(v) => change("categories", v)}
@@ -309,7 +424,7 @@ export function IWSPJobs({
         </div>
         {advanced && (
           <div className="iwsp-filter-grid">
-            <Field label="Minimum monthly allowance">
+            <Field label="Minimum advertised allowance">
               <input
                 type="number"
                 min="0"
@@ -317,7 +432,7 @@ export function IWSPJobs({
                 onChange={(e) => change("minSalary", e.target.value)}
               />
             </Field>
-            <Field label="Maximum monthly allowance">
+            <Field label="Maximum advertised allowance">
               <input
                 type="number"
                 min="0"
@@ -396,6 +511,8 @@ export function IWSPJobs({
                 change("sort", e.target.value as IWSPFilters["sort"])
               }
             >
+              <option value="newest">Latest posting first</option>
+              <option value="oldest">Oldest posting first</option>
               <option value="relevance">Relevance</option>
               <option value="resume">Resume match</option>
               <option value="closing">Closing date</option>
@@ -407,8 +524,9 @@ export function IWSPJobs({
       </div>
       {filters.sort === "resume" && (
         <p className="section-note">
-          Resume sort uses imported agent evaluations. Jobs without a current
-          evaluation remain visible with an unavailable score.
+          Sorted by automatic resume skill coverage. Open a role for evidence,
+          specific improvements and an automatic AI review. Jobs awaiting source
+          details remain visible.
         </p>
       )}
       <div className="table-card iwsp-table">
@@ -421,6 +539,7 @@ export function IWSPJobs({
                 </th>
                 <th>COMPANY / ROLE</th>
                 <th>ALLOWANCE</th>
+                <th>POSTED</th>
                 <th>CLOSING</th>
                 <th>RESUME FIT</th>
                 <th>STATUS</th>
@@ -454,6 +573,11 @@ export function IWSPJobs({
                     <button className="role-link" onClick={() => onDetails(j)}>
                       {j.title}
                     </button>
+                    <small className="iwsp-compact-facts">
+                      Posted {j.postedAt ?? "date not captured"} ·{" "}
+                      {allowance(j)} · Closes{" "}
+                      {shown(j.readyTalent?.closing_date)}
+                    </small>
                     <small>
                       {shown(j.readyTalent?.work_location)} ·{" "}
                       {shown(j.readyTalent?.vacancies)} vacancies
@@ -470,16 +594,21 @@ export function IWSPJobs({
                     </div>
                   </td>
                   <td>{allowance(j)}</td>
+                  <td>{j.postedAt ?? "Not captured"}</td>
                   <td>{shown(j.readyTalent?.closing_date)}</td>
                   <td>
                     <button className="fit-button" onClick={() => setFitJob(j)}>
-                      {results[j.id]?.agent_review?.overall == null
-                        ? "Not evaluated"
-                        : `${results[j.id].agent_review!.overall}/100`}
+                      {results[j.id]?.technical_coverage != null
+                        ? `${results[j.id].technical_coverage}% skill match`
+                        : results[j.id]?.status === "missing_posting"
+                          ? "Awaiting job details"
+                          : resume?.resume
+                            ? "Review feedback"
+                            : "Load resume"}
                       <small>
-                        {results[j.id]?.technical_coverage != null
-                          ? `${results[j.id].technical_coverage}% keyword evidence`
-                          : "View evidence"}
+                        {results[j.id]?.matched.length
+                          ? `${results[j.id].matched.length} strengths · ${results[j.id].not_evidenced.length} gaps`
+                          : "View analysis"}
                       </small>
                     </button>
                   </td>
@@ -751,15 +880,16 @@ export function IWSPJobs({
                   fit.
                 </p>
                 <p>
-                  Open a role’s fit panel to prepare a review packet for your
-                  existing AI agent, then import its JSON evaluation. The packet
-                  includes your resume and job text; share it only with the
-                  agent you intend to use.
+                  Loading a resume automatically checks every captured posting.
+                  Open a role’s Resume fit panel for an automatic AI review
+                  using your canonical skills and your signed-in Codex CLI. The
+                  selected resume and posting are sent to that AI service for
+                  the review.
                 </p>
                 <p className="hint">
-                  No agent is invoked automatically. Eligibility, language and
-                  location checks stay separate from fit. Advisory scores do not
-                  predict an ATS result.
+                  AI reviews run one at a time and are reused until the resume
+                  or posting changes. Eligibility, language and location remain
+                  separate.
                 </p>
               </section>
             </div>
@@ -773,7 +903,7 @@ export function IWSPJobs({
       )}
       {fitJob && (
         <Modal
-          title="Resume evidence & agent evaluation"
+          title="Resume fit & feedback"
           wide
           onClose={() => setFitJob(null)}
         >
@@ -788,6 +918,15 @@ export function IWSPJobs({
               setResumeOpen(true);
             }}
             onPacket={() => void run(() => packet(fitJob))}
+            onAnalyze={() =>
+              void run(async () => {
+                await api("/resume/analyze", "POST", {
+                  job_id: fitJob.id,
+                  retry: true,
+                });
+                await refresh();
+              })
+            }
             onImport={(f) =>
               void run(async () => {
                 await api("/resume/review", "POST", JSON.parse(await f.text()));
@@ -809,6 +948,7 @@ function FitPanel({
   onSetup,
   onPacket,
   onImport,
+  onAnalyze,
 }: {
   job: Job;
   result?: FitResult;
@@ -818,6 +958,7 @@ function FitPanel({
   onSetup: () => void;
   onPacket: () => void;
   onImport: (f: File) => void;
+  onAnalyze: () => void;
 }) {
   const review = result?.agent_review;
   return (
@@ -842,6 +983,24 @@ function FitPanel({
             {result?.guard_verdict ??
               "Posting guard unavailable. Check the connected skill workspace."}
           </p>
+          <div
+            className={
+              result?.status === "missing_posting"
+                ? "warning-box"
+                : "analysis-summary"
+            }
+          >
+            <strong>
+              {result?.status === "missing_posting"
+                ? "Job details are missing"
+                : "Automatic resume feedback"}
+            </strong>
+            <p>
+              {result?.summary ??
+                resume?.skill.error ??
+                "Analyzing your resume against the posting…"}
+            </p>
+          </div>
           {result?.review_required && (
             <pre className="resume-preview">
               {JSON.stringify(result.guard_findings, null, 2)}
@@ -850,7 +1009,7 @@ function FitPanel({
           <div className="resume-setup">
             <section>
               <h3>
-                Keyword evidence{" "}
+                Your strengths and skill gaps{" "}
                 {result?.technical_coverage != null &&
                   `· ${result.technical_coverage}%`}
               </h3>
@@ -868,7 +1027,11 @@ function FitPanel({
               <h4>Not evidenced in resume</h4>
               <p>
                 {result?.not_evidenced.join(" · ") ||
-                  "None detected / insufficient data"}
+                  (result?.status === "missing_posting"
+                    ? "Waiting for the full posting; gaps cannot be assessed yet."
+                    : result?.status === "no_terms"
+                      ? "No comparable skill terms were detected in this posting."
+                      : "Every detected posting skill has supporting resume evidence.")}
               </p>
               <h4>Relevant project evidence</h4>
               {result?.project_evidence.length ? (
@@ -887,49 +1050,96 @@ function FitPanel({
                   <li key={i}>{s}</li>
                 ))}
               </ul>
+              <h4>Requirements to check</h4>
+              {result?.checks.map((c) => (
+                <div className="evidence-pair" key={c.label}>
+                  <strong>
+                    {c.label} · {c.status}
+                  </strong>
+                  <p>{c.text}</p>
+                </div>
+              ))}
             </section>
             <section>
               <h3>
-                Agent review{" "}
-                {review?.overall != null && `· ${review.overall}/100`}
+                AI review {review?.overall != null && `· ${review.overall}/100`}
               </h3>
               <p>
-                Prepare a packet for the agent using your ai-job-search skills.
-                Import the agent’s response to attach an evidence-checked
-                evaluation to this exact resume and posting.
+                Uses your job-search evaluation skills and actual resume.
+                Evidence is checked against this exact posting before the result
+                is saved.
               </p>
-              <div className="iwsp-actions">
-                <button
-                  className="secondary"
-                  disabled={
-                    busy ||
-                    !result ||
-                    result.review_required ||
-                    !job.description
-                  }
-                  onClick={onPacket}
-                >
-                  <Download size={16} />
-                  Prepare agent review
-                </button>
-                <label className="secondary file-button">
-                  <Upload size={16} />
-                  Import agent evaluation
-                  <input
-                    type="file"
-                    accept=".json"
-                    disabled={busy}
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f) onImport(f);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-              </div>
+              {resume?.ai?.[job.id]?.status === "queued" && (
+                <p role="status" className="analysis-summary">
+                  AI review queued. Another role is being reviewed first.
+                </p>
+              )}
+              {resume?.ai?.[job.id]?.status === "running" && (
+                <p role="status" className="analysis-summary">
+                  AI is reviewing your resume, projects and this role’s
+                  requirements…
+                </p>
+              )}
+              {resume?.ai?.[job.id]?.error && (
+                <p role="alert" className="warning-box">
+                  {resume.ai[job.id].error}
+                </p>
+              )}
+              <button
+                className="primary"
+                onClick={onAnalyze}
+                disabled={
+                  busy ||
+                  result?.status === "missing_posting" ||
+                  result?.review_required ||
+                  ["queued", "running"].includes(
+                    resume?.ai?.[job.id]?.status ?? "",
+                  )
+                }
+              >
+                {review
+                  ? "Review again"
+                  : resume?.ai?.[job.id]?.status === "error"
+                    ? "Retry AI review"
+                    : "Analyze with AI"}
+              </button>
+              <details className="advanced-review">
+                <summary>Advanced: export or import an evaluation</summary>
+                <div className="iwsp-actions">
+                  <button
+                    className="secondary"
+                    disabled={
+                      busy ||
+                      !result ||
+                      result.review_required ||
+                      !job.description
+                    }
+                    onClick={onPacket}
+                  >
+                    <Download size={16} />
+                    Prepare agent review
+                  </button>
+                  <label className="secondary file-button">
+                    <Upload size={16} />
+                    Import agent evaluation
+                    <input
+                      type="file"
+                      accept=".json"
+                      disabled={busy}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) onImport(f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              </details>
               {!review && (
                 <p className="hint">
-                  No current agent evaluation. Overall fit remains unavailable.
+                  Your automatic skill feedback is available immediately. AI
+                  feedback appears here when the review finishes; unknown
+                  dimensions stay explicit.
                 </p>
               )}
               {review && (

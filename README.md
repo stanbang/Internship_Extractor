@@ -39,10 +39,10 @@ npm start
 - Save jobs locally; add notes, labels, deadlines, reminder dates and standard/custom application stages.
 - Add manual listings; import/refresh CSV or JSON; deduplicate while preserving personal tracking.
 - Export CSV and download/restore complete versioned JSON backups. Restore saves a recovery copy first.
-- **SIT IWSP Jobs:** separate ReadyTalent collection, coverage/error reporting, source-ID refresh, allowance/skill/closing filters, comparison and local bookmarks. See [setup and refresh instructions](docs/readytalent.md).
-- **Resume analysis:** explicitly load a root-folder resume, inspect keyword/project evidence and exchange evaluations with your existing `ai-job-search` agent through local review packets. The app reads the canonical skill framework and runs its posting guard. It does not invoke an AI provider automatically or fabricate missing scores.
+- **SIT IWSP Jobs:** opens by default, shows posting dates and sorts latest first. Sync through one manually authenticated Chrome session; every job popup is closed after capture. Stable IDs, durable checkpoints and a single-collector lock support resumable refresh. Allowance, detected role area, skills, closing-date filters, comparison and local bookmarks are available. See [setup and refresh instructions](docs/readytalent.md).
+- **Resume analysis:** load your actual root-folder resume once for automatic posting/requirements matching, strengths, evidence gaps, project examples and improvement suggestions. Opening a captured role's fit panel automatically runs an AI review through your signed-in Codex CLI using the canonical `ai-job-search` skills. It sends that resume and posting to the AI service, validates returned evidence and caches the result until inputs change. No packet exchange is required for the normal workflow. Missing source details and AI errors are explained explicitly.
 
-Reminders are displayed in-app; they do not send notifications or run while closed. Refresh imports a new file. There is no background Jorb crawler or protected API integration. Availability is a dated observation, not a guarantee a job is open.
+Reminders are displayed in-app; they do not send notifications or run while closed. Public-source refresh imports a file. ReadyTalent sync uses normal browser UI and requires your dedicated Chrome session; no private source APIs, cookies or tokens are accessed. Availability is a dated observation, not a guarantee a job is open.
 
 ## Import and backup
 

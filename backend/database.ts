@@ -8,6 +8,7 @@ import {
   type Preset,
 } from "../shared/model.js";
 import { canonicalUrl, identity, bounds } from "../shared/filter.js";
+import { readyTalentJob } from "./readytalent.js";
 const tables = [
   "companies",
   "categories",
@@ -334,7 +335,7 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
       .prepare("SELECT payload FROM readytalent_jobs WHERE job_id=?")
       .get(r.id) as any;
     const readyTalent = rt ? JSON.parse(rt.payload) : null;
-    return {
+    const job: Job = {
       sourceType: readyTalent ? "IWSP" : null,
       sourceJobId: readyTalent?.source_job_id ?? null,
       readyTalent,
@@ -381,6 +382,18 @@ CREATE INDEX jobs_posted ON jobs(posted_at);`);
         )?.body ?? "",
       labels: names("labels", "job_labels", "label_id"),
     };
+    // Project preserved source payloads on read, including imports made by older builds.
+    // Local tracking is never replaced by normalized source facts.
+    if (readyTalent) {
+      const derived = readyTalentJob(readyTalent);
+      job.description = derived.description;
+      job.postedAt = derived.postedAt ?? job.postedAt;
+      job.skills = derived.skills;
+      job.categories = derived.categories;
+      if (derived.start.value) job.start = derived.start;
+      if (derived.end.value) job.end = derived.end;
+    }
+    return job;
   }
   track(id: string, patch: Record<string, any>) {
     if (!this.get(id)) throw Error("Listing not found.");
