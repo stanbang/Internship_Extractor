@@ -1,6 +1,6 @@
 # Verification record
 
-Verified locally on Windows with Node 24.22.0. No cloud deployment or GitHub push was performed.
+The initial public-search build was verified locally on Windows with Node 24.22.0. At that stage, no cloud deployment or GitHub push had been performed. The ReadyTalent verification entry below records the subsequent integration.
 
 - `npm run check`: passed strict TypeScript checks.
 - `npm test`: **41 passed, 0 failed**. Coverage includes exact/full-period/partial/outside matches, unknowns/flexibility, precision, leap/fractional months, min/max durations, conflicts, combined facets, reset/preset restoration, URL/identity deduplication, tracking preservation, quoted CSV and formula escaping, invalid input/null durations, real SQLite reopen/migrations, atomic backup rollback, and loopback HTTP import/tracking/origin checks.
@@ -25,3 +25,12 @@ A separate SQLite workspace on port 4320 used clearly synthetic fixtures, isolat
 Desktop rendering was visually inspected. Responsive CSS is implemented at 1250, 900 and 600 px with compact/bottom navigation, stacked panels/dialogs and table scrolling. Mobile-device-specific browser verification is not claimed.
 
 Repeat with a separate `DATA_DIR` when testing mutations. Do not insert test vacancies or notes into the user's real workspace. The test workspace and screenshots are not committed.
+# ReadyTalent integration verification — 21 October 2026
+
+- `npm run check`: passed.
+- `npm test`: **53 passed, 0 failed**, including the original public workflow suite and new source-ID, coverage, refresh, backup, resume parser, skill bridge, evidence import and HTTP checks. Local socket tests were run with loopback permission.
+- `npm run build`: passed for the production frontend and backend.
+- Dependency audit: no reported vulnerabilities after replacing the DOCX parser's unused CLI dependency chain with local ZIP/XML parsing.
+- Browser: verified the preserved 248-row public search and 20-row partial IWSP view, C++ title search, closing-date filter, closing sort, local bookmark/unbookmark, two-job comparison, reset and canonical skill discovery (framework 1.2.7). No actual resume was selected; parser and review tests used synthetic fixtures.
+- Portal collection is **incomplete**: filtered count 157 over 8 pages verified, first page's 20 metadata rows stored, all 20 descriptions missing, 137 rows uncollected and pages 2–8 unprocessed. No imported description could be compared to the portal. Whole-page capture was blocked by automatic approval review pending broader read-only scope approval.
+- The local manifest and IWSP UI show these collection limits. Tests do not establish portal completeness. See [REA evidence](rea-investigation.md) and [refresh instructions](readytalent.md).

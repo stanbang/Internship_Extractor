@@ -42,6 +42,8 @@ import {
   type Preset,
 } from "../shared/model";
 import { compatibility, filterJobs, hasConflict } from "../shared/filter";
+import { Modal, Multi, Field, api } from "./ui";
+import { IWSPJobs } from "./iwsp";
 import "./styles.css";
 
 type Bootstrap = {
@@ -51,16 +53,6 @@ type Bootstrap = {
   statuses: string[];
   sources: { id: string; name: string; count: number; lastImported: string }[];
 };
-async function api(path: string, method = "GET", value?: unknown) {
-  const r = await fetch("/api" + path, {
-    method,
-    headers: value !== undefined ? { "Content-Type": "application/json" } : {},
-    body: value === undefined ? undefined : JSON.stringify(value),
-  });
-  const data = await r.json();
-  if (!r.ok) throw Error(data.error ?? "Request failed");
-  return data;
-}
 const formatDate = (v: string | null | undefined) => v ?? "Not stated";
 const durationText = (j: Job) =>
   j.duration.min === null && j.duration.max === null
@@ -72,136 +64,6 @@ const matchNames = {
   incompatible: "Incompatible",
   unknown: "Insufficient information",
 };
-function Modal({
-  title,
-  children,
-  onClose,
-  wide = false,
-}: {
-  title: string;
-  children: ReactNode;
-  onClose: () => void;
-  wide?: boolean;
-}) {
-  const panel = useRef<HTMLElement>(null),
-    close = useRef(onClose);
-  close.current = onClose;
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null,
-      overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const focusable = () =>
-      Array.from(
-        panel.current?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
-        ) ?? [],
-      ).filter((el) => el.offsetParent !== null);
-    focusable()[0]?.focus();
-    const h = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close.current();
-      if (e.key === "Tab") {
-        const els = focusable(),
-          first = els[0],
-          last = els.at(-1);
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last?.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first?.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", h);
-    return () => {
-      document.removeEventListener("keydown", h);
-      document.body.style.overflow = overflow;
-      previous?.focus();
-    };
-  }, []);
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <section
-        ref={panel}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className={"modal " + (wide ? "wide" : "")}
-      >
-        <div className="modal-head">
-          <h2>{title}</h2>
-          <button
-            className="icon-button"
-            aria-label="Close dialog"
-            onClick={onClose}
-          >
-            <X size={20} />
-          </button>
-        </div>
-        {children}
-      </section>
-    </div>
-  );
-}
-function Multi({
-  label,
-  values,
-  selected,
-  onChange,
-}: {
-  label: string;
-  values: string[];
-  selected: string[];
-  onChange: (v: string[]) => void;
-}) {
-  return (
-    <details className="multi">
-      <summary>
-        {label}
-        {selected.length > 0 && <span>{selected.length}</span>}
-        <span className="caret">⌄</span>
-      </summary>
-      <div className="multi-menu">
-        <div className="menu-heading">
-          {label}
-          <button className="text-button" onClick={() => onChange([])}>
-            Reset
-          </button>
-        </div>
-        {values.map((v) => (
-          <label key={v}>
-            <input
-              type="checkbox"
-              checked={selected.includes(v)}
-              onChange={() =>
-                onChange(
-                  selected.includes(v)
-                    ? selected.filter((x) => x !== v)
-                    : [...selected, v],
-                )
-              }
-            />
-            {v}
-          </label>
-        ))}
-        {values.length === 0 && <p>No imported values yet.</p>}
-      </div>
-    </details>
-  );
-}
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
 
 function App() {
   const [data, setData] = useState<Bootstrap>({
@@ -260,19 +122,24 @@ function App() {
     setFilters((f) => ({ ...f, [key]: value }));
     setPage(1);
   };
+  const publicJobs = useMemo(
+    () => data.jobs.filter((j) => !j.readyTalent),
+    [data.jobs],
+  );
   const filtered = useMemo(
     () =>
-      filterJobs(data.jobs, {
+      filterJobs(view === "saved" ? data.jobs : publicJobs, {
         ...filters,
         saved: view === "saved" ? "saved" : filters.saved,
       }),
-    [data.jobs, filters, view],
+    [data.jobs, publicJobs, filters, view],
   );
+  const facetJobs = view === "saved" ? data.jobs : publicJobs;
   const categories = [
-      ...new Set(data.jobs.flatMap((j) => j.categories)),
+      ...new Set(facetJobs.flatMap((j) => j.categories)),
     ].sort(),
-    levels = [...new Set([...LEVELS, ...data.jobs.flatMap((j) => j.levels)])],
-    locations = [...new Set(data.jobs.flatMap((j) => j.locations))].sort();
+    levels = [...new Set([...LEVELS, ...facetJobs.flatMap((j) => j.levels)])],
+    locations = [...new Set(facetJobs.flatMap((j) => j.locations))].sort();
   const saved = data.jobs.filter((j) => j.saved),
     tracked = data.jobs.filter((j) => j.saved || j.status !== "Not Started");
   const pages = Math.max(1, Math.ceil(filtered.length / 25));
@@ -326,6 +193,7 @@ function App() {
         <nav>
           {[
             ["all", "All internships", Search],
+            ["iwsp", "SIT IWSP Jobs", FolderOpen],
             ["saved", "Saved internships", Bookmark],
             ["tracker", "Application tracker", LayoutGrid],
             ["settings", "Data & settings", Database],
@@ -391,7 +259,7 @@ function App() {
             </button>
           </div>
         )}
-        {view !== "settings" && (
+        {view !== "settings" && view !== "iwsp" && (
           <>
             <section className="page-heading">
               <div>
@@ -1125,6 +993,15 @@ function App() {
             </div>
           </>
         )}
+        {view === "iwsp" && (
+          <IWSPJobs
+            jobs={data.jobs}
+            statuses={data.statuses}
+            reload={reload}
+            onDetails={setSelected}
+            onBookmark={toggleSave}
+          />
+        )}
         {view === "tracker" && (
           <>
             <div className="section-note">
@@ -1553,10 +1430,12 @@ function Details({
             <Bookmark size={16} />
             {j.saved ? "Saved locally" : "Save internship"}
           </button>
-          <button className="secondary" onClick={onEdit}>
-            <Pencil size={16} />
-            Edit facts
-          </button>
+          {!j.readyTalent && (
+            <button className="secondary" onClick={onEdit}>
+              <Pencil size={16} />
+              Edit facts
+            </button>
+          )}
           {j.url && (
             <a
               className="primary"
@@ -1564,7 +1443,7 @@ function Details({
               target="_blank"
               rel="noreferrer"
             >
-              Employer listing
+              {j.readyTalent ? "Find in ReadyTalent" : "Employer listing"}
               <ArrowUpRight size={16} />
             </a>
           )}
@@ -1622,6 +1501,30 @@ function Details({
                 <p className="description">{j.eligibility}</p>
               </>
             )}
+            {j.readyTalent && (
+              <details className="source-metadata">
+                <summary>Full original source fields</summary>
+                <p className="hint">
+                  The portal details route depends on browser context. Use the
+                  source ID to verify the correct listing after opening
+                  ReadyTalent search.
+                </p>
+                <dl className="metadata">
+                  {Object.entries(j.readyTalent).map(([key, value]) => (
+                    <React.Fragment key={key}>
+                      <dt>{key.replaceAll("_", " ")}</dt>
+                      <dd className="description">
+                        {value == null
+                          ? "Not stated"
+                          : typeof value === "object"
+                            ? JSON.stringify(value, null, 2)
+                            : String(value)}
+                      </dd>
+                    </React.Fragment>
+                  ))}
+                </dl>
+              </details>
+            )}
             <h3>Date evidence & provenance</h3>
             {[j.start.evidence, j.end.evidence, j.duration.evidence, j.evidence]
               .filter((x, i, a) => x && a.indexOf(x) === i)
@@ -1641,7 +1544,9 @@ function Details({
                   "Not stated"
                 )}
               </dd>
-              <dt>Employer URL</dt>
+              <dt>
+                {j.readyTalent ? "ReadyTalent search URL" : "Employer URL"}
+              </dt>
               <dd>
                 {j.url ? (
                   <a href={j.url} target="_blank" rel="noreferrer">

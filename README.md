@@ -39,6 +39,8 @@ npm start
 - Save jobs locally; add notes, labels, deadlines, reminder dates and standard/custom application stages.
 - Add manual listings; import/refresh CSV or JSON; deduplicate while preserving personal tracking.
 - Export CSV and download/restore complete versioned JSON backups. Restore saves a recovery copy first.
+- **SIT IWSP Jobs:** separate ReadyTalent collection, coverage/error reporting, source-ID refresh, allowance/skill/closing filters, comparison and local bookmarks. See [setup and refresh instructions](docs/readytalent.md).
+- **Resume analysis:** explicitly load a root-folder resume, inspect keyword/project evidence and exchange evaluations with your existing `ai-job-search` agent through local review packets. The app reads the canonical skill framework and runs its posting guard. It does not invoke an AI provider automatically or fabricate missing scores.
 
 Reminders are displayed in-app; they do not send notifications or run while closed. Refresh imports a new file. There is no background Jorb crawler or protected API integration. Availability is a dated observation, not a guarantee a job is open.
 

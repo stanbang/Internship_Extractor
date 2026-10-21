@@ -1,0 +1,49 @@
+{
+  "manifest": {
+    "source": "SIT ReadyTalent",
+    "source_type": "IWSP",
+    "employment_type": "Integrated Work Study Programme (IWSP)",
+    "programme": "BSc (Hons) Com Sci in RTIS",
+    "expected_count": 1,
+    "expected_pages": 1,
+    "pages_processed": [1],
+    "errors": [],
+    "started_at": "2026-10-21T08:00:00Z",
+    "finished_at": "2026-10-21T08:01:00Z",
+    "evidence_ids": ["SYNTHETIC-FIXTURE-ONLY"]
+  },
+  "jobs": [
+    {
+      "source": "SIT ReadyTalent",
+      "source_type": "IWSP",
+      "source_job_id": "SYNTHETIC-EXAMPLE-NOT-A-REAL-JOB",
+      "job_title": "Synthetic Software Internship",
+      "company_name": "Example Test Company",
+      "employment_type": "Integrated Work Study Programme (IWSP)",
+      "eligible_programmes": ["BSc (Hons) Com Sci in RTIS"],
+      "original_description": "SYNTHETIC FIXTURE ONLY. Develop C++ software and test it. This is not a real portal listing.",
+      "original_posting_text": null,
+      "responsibilities": null,
+      "minimum_requirements": null,
+      "preferred_qualifications": null,
+      "technical_skills": ["C++"],
+      "programming_languages": null,
+      "technologies": null,
+      "categories": null,
+      "monthly_allowance": null,
+      "vacancies": null,
+      "work_location": null,
+      "internship_period": null,
+      "closing_date": null,
+      "application_status": null,
+      "original_url": "https://readytalent2.singaporetech.edu.sg/rt-student-search/",
+      "extracted_at": "2026-10-21T08:00:00Z",
+      "last_verified_at": null,
+      "page": 1,
+      "evidence_id": "SYNTHETIC-FIXTURE-ONLY",
+      "original_metadata": null,
+      "availability": "unverified",
+      "availability_evidence": null
+    }
+  ]
+}
